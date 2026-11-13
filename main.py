@@ -13,7 +13,6 @@ app = Flask(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# NIFTY 50 LIST
 NIFTY50 = ["RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS","INFY.NS","TCS.NS","BHARTIARTL.NS","ITC.NS","SBIN.NS","LT.NS","AXISBANK.NS","KOTAKBANK.NS","BAJFINANCE.NS","HINDUNILVR.NS","ASIANPAINT.NS","MARUTI.NS","SUNPHARMA.NS","TITAN.NS","ULTRACEMCO.NS","WIPRO.NS","NTPC.NS","HCLTECH.NS","POWERGRID.NS","ONGC.NS","TATAMOTORS.NS","ADANIENT.NS","ADANIPORTS.NS","BAJAJFINSV.NS","COALINDIA.NS","GRASIM.NS","JSWSTEEL.NS","TATASTEEL.NS","TECHM.NS","M&M.NS","BAJAJ-AUTO.NS","INDUSINDBK.NS","CIPLA.NS","DRREDDY.NS","EICHERMOT.NS","APOLLOHOSP.NS","BRITANNIA.NS","BEL.NS","DIVISLAB.NS","HEROMOTOCO.NS","HINDALCO.NS","LTIM.NS","SBILIFE.NS","SHRIRAMFIN.NS","TRENT.NS","HDFCLIFE.NS"]
 
 TIMEFRAMES = {"1M":"1m","3M":"3m","5M":"5m","15M":"15m","30M":"30m","1H":"60m","2H":"120m","4H":"240m","D":"1d","W":"1wk","M":"1mo"}
@@ -58,12 +57,9 @@ def get_dual_signal(symbol, yf_interval):
         df.columns = [c.capitalize() for c in df.columns]
         d1 = supertrend_dir(df, 10, 3.0)
         d2 = supertrend_dir(df, 1, 1.6)
-        if d1==-1 and d2==-1:
-            return "B"
-        elif d1==1 and d2==1:
-            return "S"
-        else:
-            return "N"
+        if d1==-1 and d2==-1: return "B"
+        elif d1==1 and d2==1: return "S"
+        else: return "N"
     except:
         return "N"
 
@@ -78,7 +74,7 @@ def create_box_image(results, symbol):
     cell_w, cell_h = 70, 46
     gap = 3
     W = len(tfs)*cell_w + (len(tfs)-1)*gap + 20
-    H = 2*cell_h + gap + 20
+    H = 2*cell_h + gap + 30
     img = Image.new("RGB", (W,H), "white")
     draw = ImageDraw.Draw(img)
     try:
@@ -108,81 +104,58 @@ def send_photo(path, caption):
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
         with open(path,'rb') as f:
-            requests.post(url, data={"chat_id":CHAT_ID, "caption":caption}, files={"photo":f}, timeout=15)
+            r = requests.post(url, data={"chat_id":CHAT_ID, "caption":caption}, files={"photo":f}, timeout=20)
+            print("TELEGRAM REPLY:", r.text)
+            return r.text
     except Exception as e:
-        print(e)
+        return str(e)
 
 @app.route("/")
 def home():
-    return "✅ LIVE: /nifty50 for ALL 50 BOXES | /box/RELIANCE for Photo BOX"
+    return "✅ LIVE | /nifty50 = All 50 Stocks Ek Sath | /box/RELIANCE = Photo Box"
 
 @app.route("/box/<symbol>")
 def box_test(symbol):
     symbol = symbol.upper()
-    if ".NS" not in symbol and "BTC" not in symbol and "USD" not in symbol:
+    if ".NS" not in symbol and "USD" not in symbol:
         symbol += ".NS"
     res = scan_symbol(symbol)
     clean = symbol.replace(".NS","")
     path = create_box_image(res, clean)
     b = sum(1 for v in res.values() if v=="B")
     s = sum(1 for v in res.values() if v=="S")
-    caption = f"{clean} - {b}B / {s}S - {datetime.now().strftime('%d %b %I:%M %p')}"
-    send_photo(path, caption)
-    return f"Photo Sent {clean} - {res}"
+    caption = f"{clean} - {b}B / {s}S - DUAL ST(10,3)+(1,1.6)"
+    result = send_photo(path, caption)
+    return f"Photo Path: {path}<br>Result: {result}<br>Data: {res}"
 
 @app.route("/nifty50")
 def nifty_dashboard():
     html = """
-    <html><head><meta http-equiv="refresh" content="120">
+    <html><head><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="refresh" content="90">
     <style>
-    body{background:#0f0f0f;color:white;font-family:Arial;padding:10px}
-    .stock{margin-bottom:12px;border:1px solid #333;padding:8px;border-radius:8px;background:#1c1c1c}
-    .name{font-weight:bold;font-size:17px;margin-bottom:6px}
+    body{background:#0f0f0f;color:white;font-family:Arial;padding:8px}
+    .stock{margin-bottom:10px;border:1px solid #333;padding:8px;border-radius:8px;background:#1c1c1c}
+    .name{font-weight:bold;font-size:16px;margin-bottom:6px}
     .row{display:flex;gap:2px;flex-wrap:wrap}
-    .tf{background:#1e325a;color:white;width:42px;text-align:center;padding:4px 0;font-size:12px;font-weight:bold}
-    .val{width:42px;text-align:center;padding:6px 0;font-size:14px;font-weight:bold;color:white}
+    .tf{background:#1e325a;color:white;width:32px;text-align:center;padding:3px 0;font-size:11px;font-weight:bold}
+    .val{width:32px;text-align:center;padding:5px 0;font-size:13px;font-weight:bold;color:white}
     .B{background:#2e7d32} .S{background:#c62828} .N{background:#ef6c00}
     </style></head><body>
-    <h2>📊 NIFTY 50 - 11 TF BOX (All 50 Stocks Ek Sath) - Auto Refresh 2 min</h2>
+    <h3>📊 NIFTY 50 - 11 TF BOX - All 50 Ek Sath (90s Refresh)</h3>
     """
     for sym in NIFTY50:
         res = scan_symbol(sym)
         clean = sym.replace(".NS","")
         b = sum(1 for v in res.values() if v=="B")
         s = sum(1 for v in res.values() if v=="S")
-        strong = "🔥 STRONG" if b>=9 or s>=9 else ""
-        html += f'<div class="stock"><div class="name">{clean} - {b}B / {s}S {strong}</div>'
-        html += '<div class="row">'
-        for tf in TF_ORDER:
-            html += f'<div class="tf">{tf}</div>'
+        strong = " 🔥" if b>=9 or s>=9 else ""
+        html += f'<div class="stock"><div class="name">{clean} - {b}B/{s}S{strong}</div><div class="row">'
+        for tf in TF_ORDER: html += f'<div class="tf">{tf}</div>'
         html += '</div><div class="row">'
-        for tf in TF_ORDER:
-            html += f'<div class="val {res[tf]}">{res[tf]}</div>'
+        for tf in TF_ORDER: html += f'<div class="val {res[tf]}">{res[tf]}</div>'
         html += '</div></div>'
     html += "</body></html>"
     return html
-
-def scanner_loop():
-    while True:
-        try:
-            now = datetime.now()
-            if now.weekday()<5 and 9 <= now.hour <= 15:
-                for sym in NIFTY50[:15]: # Telegram spam se bachne ke liye 15 hi strong wale
-                    res = scan_symbol(sym)
-                    b = sum(1 for v in res.values() if v=="B")
-                    s = sum(1 for v in res.values() if v=="S")
-                    if b>=10 or s>=10:
-                        clean = sym.replace(".NS","")
-                        path = create_box_image(res, clean)
-                        caption = f"{clean} - STRONG {b}B {s}S - 11 TF BOX"
-                        send_photo(path, caption)
-                    time.sleep(2)
-            time.sleep(300)
-        except Exception as e:
-            print(e)
-            time.sleep(60)
-
-threading.Thread(target=scanner_loop, daemon=True).start()
 
 if __name__=="__main__":
     app.run(host="0.0.0.0", port=10000)
