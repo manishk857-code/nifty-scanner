@@ -7,16 +7,16 @@ import threading
 from datetime import datetime
 import os
 from PIL import Image, ImageDraw, ImageFont
+from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# TOP 25 NIFTY - FASTEST LIVE
 NIFTY25 = ["RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS","INFY.NS","TCS.NS","BHARTIARTL.NS","ITC.NS","SBIN.NS","LT.NS","AXISBANK.NS","KOTAKBANK.NS","BAJFINANCE.NS","HINDUNILVR.NS","ASIANPAINT.NS","MARUTI.NS","SUNPHARMA.NS","TITAN.NS","ULTRACEMCO.NS","WIPRO.NS","NTPC.NS","HCLTECH.NS","POWERGRID.NS","ONGC.NS","TATAMOTORS.NS","ADANIENT.NS"]
-
 TIMEFRAMES = {"1M":"1m","3M":"3m","5M":"5m","15M":"15m","30M":"30m","1H":"60m","2H":"120m","4H":"240m","D":"1d","W":"1wk","M":"1mo"}
 TF_ORDER = ["1M","3M","5M","15M","30M","1H","2H","4H","D","W","M"]
+CACHE = {"data": {}, "time": 0}
 
 def supertrend_dir(df, p, m):
     try:
@@ -52,18 +52,43 @@ def scan(sym):
     for tf in TF_ORDER: res[tf]=get_sig(sym,TIMEFRAMES[tf])
     return res
 
+def scan_all_fast():
+    def one(sym):
+        try: return sym, scan(sym)
+        except: return sym, {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(one, NIFTY25))
+    data = {}
+    for sym, res in results:
+        clean=sym.replace(".NS","")
+        b=sum(1 for v in res.values() if v=="B")
+        s=sum(1 for v in res.values() if v=="S")
+        data[clean]={"data":res,"b":b,"s":s,"time":datetime.now().strftime("%H:%M:%S")}
+    CACHE["data"]=data
+    CACHE["time"]=time.time()
+    return data
+
+# AUTO REFRESH CACHE EVERY 2 MIN
+def cache_loop():
+    while True:
+        try: scan_all_fast()
+        except: pass
+        time.sleep(120)
+threading.Thread(target=cache_loop, daemon=True).start()
+scan_all_fast()
+
 def create_box(results, symbol):
     tfs=TF_ORDER; cell_w,cell_h=58,48; gap=2; W=len(tfs)*cell_w+(len(tfs)-1)*gap+20; H=2*cell_h+gap+35
     img=Image.new("RGB",(W,H),"white"); draw=ImageDraw.Draw(img)
     try: f1=ImageFont.truetype("DejaVuSans-Bold.ttf",14); f2=ImageFont.truetype("DejaVuSans-Bold.ttf",18); f3=ImageFont.truetype("DejaVuSans-Bold.ttf",11)
     except: f1=f2=f3=ImageFont.load_default()
-    draw.text((10,2),f"{symbol} - LIVE 30SEC",fill="black",font=f3)
+    draw.text((10,2),f"{symbol} - LIVE",fill="black",font=f3)
     x0,y0=10,18
     for i,tf in enumerate(tfs):
         x=x0+i*(cell_w+gap)
         draw.rectangle([x,y0,x+cell_w,y0+cell_h],fill=(20,40,80))
         draw.text((x+8,y0+10),tf,fill="white",font=f1)
-        val=results[tf]; col=(34,139,34) if val=="B" else (200,30,30) if val=="S" else (255,140,0)
+        val=results.get(tf,"N"); col=(34,139,34) if val=="B" else (200,30,30) if val=="S" else (255,140,0)
         y1=y0+cell_h+gap; draw.rectangle([x,y1,x+cell_w,y1+cell_h],fill=col)
         draw.text((x+18,y1+12),val,fill="white",font=f2)
     path=f"/tmp/{symbol}.png"; img.save(path); return path
@@ -77,35 +102,30 @@ def send_photo(path,caption):
 def auto_loop():
     while True:
         try:
-            for sym in NIFTY25:
-                res=scan(sym); b=sum(1 for v in res.values() if v=="B"); s=sum(1 for v in res.values() if v=="S")
+            data=CACHE["data"]
+            for sym, info in data.items():
+                b=info["b"]; s=info["s"]
                 if b>=7 or s>=7:
-                    clean=sym.replace(".NS","")
-                    path=create_box(res,clean)
-                    cap=f"🔴 TOP25 LIVE\n{clean} - {b}B/{s}S\nTime: {datetime.now().strftime('%H:%M:%S')}\n{'🟢 STRONG BUY' if b>=7 else '🔴 STRONG SELL'}"
+                    path=create_box(info["data"],sym)
+                    cap=f"TOP25 LIVE {sym} - {b}B/{s}S Time:{info['time']}"
                     send_photo(path,cap)
                     time.sleep(2)
             time.sleep(90)
-        except:
-            time.sleep(60)
-
+        except: time.sleep(60)
 threading.Thread(target=auto_loop, daemon=True).start()
 
 @app.route("/")
-def home(): return "✅ TOP 25 LIVE - 30 SEC - FASTEST"
+def home(): return "TOP 25 LIVE OK"
 
-@app.route("/box/<symbol>")
-def box_test(symbol):
-    symbol=symbol.upper()
-    if ".NS" not in symbol: symbol+=".NS"
-    res=scan(symbol); clean=symbol.replace(".NS",""); path=create_box(res,clean)
-    b=sum(1 for v in res.values() if v=="B"); s=sum(1 for v in res.values() if v=="S")
-    send_photo(path,f"{clean} - {b}B/{s}S - LIVE {datetime.now().strftime('%H:%M:%S')}")
-    return jsonify({"symbol":clean,"b":b,"s":s,"data":res})
+@app.route("/api/all")
+def api_all():
+    if not CACHE["data"] or time.time()-CACHE["time"]>180:
+        threading.Thread(target=scan_all_fast).start()
+    return jsonify(CACHE["data"])
 
 @app.route("/api/scan/<symbol>")
 def api_scan(symbol):
-    symbol=symbol.upper(); 
+    symbol=symbol.upper()
     if ".NS" not in symbol: symbol+=".NS"
     res=scan(symbol); b=sum(1 for v in res.values() if v=="B"); s=sum(1 for v in res.values() if v=="S")
     return jsonify({"symbol":symbol.replace(".NS",""),"data":res,"b":b,"s":s,"time":datetime.now().strftime("%H:%M:%S")})
@@ -113,9 +133,22 @@ def api_scan(symbol):
 @app.route("/nifty25")
 @app.route("/nifty50")
 def nifty_dashboard():
-    html="""<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>TOP 25 LIVE</title><style>body{background:#000;color:#fff;font-family:Arial;padding:5px;margin:0} .b{background:#2e7d32} .s{background:#c62828} .n{background:#ef6c00} .stock{background:#111;margin:6px;padding:8px;border-radius:10px;border:1px solid #333} .val{display:inline-block;width:28px;text-align:center;padding:4px;margin:1px;color:#fff;font-size:12px;border-radius:4px;font-weight:bold} .tf{display:inline-block;width:28px;text-align:center;background:#1e325a;margin:1px;font-size:9px;padding:2px;border-radius:3px} #head{position:sticky;top:0;background:#000;padding:10px;text-align:center;z-index:10} .live{color:#0f0;animation:blink 1s infinite} @keyframes blink{50%{opacity:0.3}}</style></head><body><div id='head'><h3 style='margin:0'><span class=live>🔴 LIVE 30 SEC</span> - TOP 25</h3><div style='color:yellow;font-size:12px' id='st'>Loading...</div></div><div id='c'></div><script>
-    const N=["RELIANCE","HDFCBANK","ICICIBANK","INFY","TCS","BHARTIARTL","ITC","SBIN","LT","AXISBANK","KOTAKBANK","BAJFINANCE","HINDUNILVR","ASIANPAINT","MARUTI","SUNPHARMA","TITAN","ULTRACEMCO","WIPRO","NTPC","HCLTECH","POWERGRID","ONGC","TATAMOTORS","ADANIENT"]; const TF=["1M","3M","5M","15","30","1H","2H","4H","D","W","M"];
-    async function load(){let c=document.getElementById('c'); c.innerHTML=""; for(let s of N){try{let r=await fetch('/api/scan/'+s); let j=await r.json(); let cls=j.b>=7?'b':j.s>=7?'s':''; let h=`<div class=stock style='border-left:5px solid ${j.b>=7?'#2e7d32':j.s>=7?'#c62828':'#333'}'><b>${j.symbol} <span style='float:right'>${j.b}B/${j.s}S ${j.time}</span></b><br><div style='margin-top:5px'>`; TF.forEach(t=>h+=`<span class=tf>${t}</span>`); h+="<br>"; TF.forEach(t=>{let v=j.data[t]||"N"; let cl=v=="B"?"b":v=="S"?"s":"n"; h+=`<span class='val ${cl}'>${v}</span>`}); h+="</div></div>"; c.innerHTML+=h;}catch(e){} document.getElementById('st').innerText="Updated "+new Date().toLocaleTimeString()+" - Next 30 sec";}}
+    html="""<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>TOP 25 LIVE</title><style>body{background:#000;color:#fff;font-family:Arial;padding:5px;margin:0} .b{background:#2e7d32} .s{background:#c62828} .n{background:#ef6c00} .stock{background:#111;margin:6px;padding:8px;border-radius:10px;border:1px solid #333} .val{display:inline-block;width:28px;text-align:center;padding:4px;margin:1px;color:#fff;font-size:12px;border-radius:4px;font-weight:bold} .tf{display:inline-block;width:28px;text-align:center;background:#1e325a;margin:1px;font-size:9px;padding:2px;border-radius:3px} #head{position:sticky;top:0;background:#000;padding:10px;text-align:center;z-index:10} .live{color:#0f0;animation:blink 1s infinite} @keyframes blink{50%{opacity:0.3}}</style></head><body><div id='head'><h3 style='margin:0'><span class=live>🔴 LIVE 30 SEC</span> - TOP 25</h3><div style='color:yellow;font-size:12px' id='st'>Loading 25 Stocks...</div></div><div id='c'></div><script>
+    const TF=["1M","3M","5M","15","30","1H","2H","4H","D","W","M"];
+    async function load(){
+      try{
+        let r=await fetch('/api/all'); let all=await r.json();
+        let c=document.getElementById('c'); c.innerHTML="";
+        Object.keys(all).forEach(sym=>{
+          let j=all[sym];
+          let h=`<div class=stock style='border-left:5px solid ${j.b>=7?'#2e7d32':j.s>=7?'#c62828':'#333'}'><b>${sym} <span style='float:right'>${j.b}B/${j.s}S ${j.time}</span></b><br><div style='margin-top:5px'>`;
+          TF.forEach(t=>h+=`<span class=tf>${t}</span>`); h+="<br>";
+          TF.forEach(t=>{let v=(j.data && j.data[t])||"N"; let cl=v=="B"?"b":v=="S"?"s":"n"; h+=`<span class='val ${cl}'>${v}</span>`});
+          h+="</div></div>"; c.innerHTML+=h;
+        });
+        document.getElementById('st').innerText="Updated "+new Date().toLocaleTimeString()+" - Next 30 sec (25 STOCKS LIVE)";
+      }catch(e){ document.getElementById('st').innerText="Loading... 1 min wait"; }
+    }
     load(); setInterval(load,30000);
     </script></body></html>"""
     return html
