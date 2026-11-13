@@ -1,4 +1,6 @@
-flask
-requests
+Flask
 yfinance
 pandas
+numpy
+requests
+Pillow
