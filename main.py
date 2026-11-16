@@ -18,6 +18,16 @@ TIMEFRAMES = {"1M":"1m","3M":"3m","5M":"5m","15M":"15m","30M":"30m","1H":"60m","
 TF_ORDER = ["1M","3M","5M","15M","30M","1H","2H","4H","D","W","M"]
 CACHE = {"data": {}, "time": 0}
 
+# === NAYA FILTER - 6 TF COMPULSORY GREEN ===
+COMPULSORY_TF = ["1M","3M","5M","15M","30M","1H"]
+
+def is_6_tf_green(results):
+    """Aapka naya filter - 6 TF me se 1 bhi N ya S hua to reject"""
+    for tf in COMPULSORY_TF:
+        if results.get(tf) != "B":
+            return False
+    return True
+
 def supertrend_dir(df, p, m):
     try:
         hl2 = (df['High']+df['Low'])/2
@@ -68,7 +78,6 @@ def scan_all_fast():
     CACHE["time"]=time.time()
     return data
 
-# AUTO REFRESH CACHE EVERY 2 MIN
 def cache_loop():
     while True:
         try: scan_all_fast()
@@ -82,13 +91,16 @@ def create_box(results, symbol):
     img=Image.new("RGB",(W,H),"white"); draw=ImageDraw.Draw(img)
     try: f1=ImageFont.truetype("DejaVuSans-Bold.ttf",14); f2=ImageFont.truetype("DejaVuSans-Bold.ttf",18); f3=ImageFont.truetype("DejaVuSans-Bold.ttf",11)
     except: f1=f2=f3=ImageFont.load_default()
-    draw.text((10,2),f"{symbol} - LIVE",fill="black",font=f3)
+    draw.text((10,2),f"{symbol} - 6TF GREEN MUST",fill="black",font=f3)
     x0,y0=10,18
     for i,tf in enumerate(tfs):
         x=x0+i*(cell_w+gap)
         draw.rectangle([x,y0,x+cell_w,y0+cell_h],fill=(20,40,80))
         draw.text((x+8,y0+10),tf,fill="white",font=f1)
         val=results.get(tf,"N"); col=(34,139,34) if val=="B" else (200,30,30) if val=="S" else (255,140,0)
+        # Compulsory wale pe green border
+        if tf in COMPULSORY_TF and val=="B":
+            draw.rectangle([x-1,y1-1,x+cell_w+1,y1+cell_h+1],outline=(0,255,0),width=2)
         y1=y0+cell_h+gap; draw.rectangle([x,y1,x+cell_w,y1+cell_h],fill=col)
         draw.text((x+18,y1+12),val,fill="white",font=f2)
     path=f"/tmp/{symbol}.png"; img.save(path); return path
@@ -99,23 +111,30 @@ def send_photo(path,caption):
         with open(path,'rb') as f: requests.post(url,data={"chat_id":CHAT_ID,"caption":caption},files={"photo":f},timeout=20)
     except: pass
 
+# === NAYA AUTO LOOP - SIRF 6 TF GREEN PE HI TELEGRAM ===
 def auto_loop():
     while True:
         try:
             data=CACHE["data"]
             for sym, info in data.items():
-                b=info["b"]; s=info["s"]
-                if b>=7 or s>=7:
+                # Purana: if b>=7 or s>=7:
+                # Naya: 6 TF Compulsory Green + 7B
+                if is_6_tf_green(info["data"]) and info["b"]>=7:
                     path=create_box(info["data"],sym)
-                    cap=f"TOP25 LIVE {sym} - {b}B/{s}S Time:{info['time']}"
+                    cap=f"🔥 6TF GREEN MUST {sym} - {info['b']}B/{info['s']}S Time:{info['time']}\n1M,3M,5M,15M,30M,1H = SAB GREEN ✅"
                     send_photo(path,cap)
+                    print(f"SENT {sym} - 6TF GREEN")
                     time.sleep(2)
+                else:
+                    print(f"SKIPPED {sym} - 6TF Green nahi - {info['data']}")
             time.sleep(90)
-        except: time.sleep(60)
+        except Exception as e:
+            print(f"Loop Error: {e}")
+            time.sleep(60)
 threading.Thread(target=auto_loop, daemon=True).start()
 
 @app.route("/")
-def home(): return "TOP 25 LIVE OK"
+def home(): return "TOP 25 LIVE OK - 6TF GREEN MUST FILTER ON"
 
 @app.route("/api/all")
 def api_all():
@@ -128,26 +147,30 @@ def api_scan(symbol):
     symbol=symbol.upper()
     if ".NS" not in symbol: symbol+=".NS"
     res=scan(symbol); b=sum(1 for v in res.values() if v=="B"); s=sum(1 for v in res.values() if v=="S")
-    return jsonify({"symbol":symbol.replace(".NS",""),"data":res,"b":b,"s":s,"time":datetime.now().strftime("%H:%M:%S")})
+    is_green = is_6_tf_green(res)
+    return jsonify({"symbol":symbol.replace(".NS",""),"data":res,"b":b,"s":s,"6TF_GREEN":is_green,"time":datetime.now().strftime("%H:%M:%S")})
 
 @app.route("/nifty25")
 @app.route("/nifty50")
 def nifty_dashboard():
-    html="""<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>TOP 25 LIVE</title><style>body{background:#000;color:#fff;font-family:Arial;padding:5px;margin:0} .b{background:#2e7d32} .s{background:#c62828} .n{background:#ef6c00} .stock{background:#111;margin:6px;padding:8px;border-radius:10px;border:1px solid #333} .val{display:inline-block;width:28px;text-align:center;padding:4px;margin:1px;color:#fff;font-size:12px;border-radius:4px;font-weight:bold} .tf{display:inline-block;width:28px;text-align:center;background:#1e325a;margin:1px;font-size:9px;padding:2px;border-radius:3px} #head{position:sticky;top:0;background:#000;padding:10px;text-align:center;z-index:10} .live{color:#0f0;animation:blink 1s infinite} @keyframes blink{50%{opacity:0.3}}</style></head><body><div id='head'><h3 style='margin:0'><span class=live>🔴 LIVE 30 SEC</span> - TOP 25</h3><div style='color:yellow;font-size:12px' id='st'>Loading 25 Stocks...</div></div><div id='c'></div><script>
-    const TF=["1M","3M","5M","15","30","1H","2H","4H","D","W","M"];
+    html="""<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>TOP 25 LIVE - 6TF GREEN</title><style>body{background:#000;color:#fff;font-family:Arial;padding:5px;margin:0} .b{background:#2e7d32} .s{background:#c62828} .n{background:#ef6c00} .stock{background:#111;margin:6px;padding:8px;border-radius:10px;border:1px solid #333} .val{display:inline-block;width:28px;text-align:center;padding:4px;margin:1px;color:#fff;font-size:12px;border-radius:4px;font-weight:bold} .tf{display:inline-block;width:28px;text-align:center;background:#1e325a;margin:1px;font-size:9px;padding:2px;border-radius:3px} #head{position:sticky;top:0;background:#000;padding:10px;text-align:center;z-index:10} .live{color:#0f0;animation:blink 1s infinite} @keyframes blink{50%{opacity:0.3}}</style></head><body><div id='head'><h3 style='margin:0'><span class=live>🔴 6TF GREEN MUST</span> - TOP 25</h3><div style='color:yellow;font-size:12px' id='st'>Loading 25 Stocks...</div></div><div id='c'></div><script>
+    const TF=["1M","3M","5M","15M","30M","1H","2H","4H","D","W","M"];
     async function load(){
       try{
         let r=await fetch('/api/all'); let all=await r.json();
         let c=document.getElementById('c'); c.innerHTML="";
         Object.keys(all).forEach(sym=>{
           let j=all[sym];
-          let h=`<div class=stock style='border-left:5px solid ${j.b>=7?'#2e7d32':j.s>=7?'#c62828':'#333'}'><b>${sym} <span style='float:right'>${j.b}B/${j.s}S ${j.time}</span></b><br><div style='margin-top:5px'>`;
+          let compulsory = ["1M","3M","5M","15M","30M","1H"].every(tf => j.data[tf]=="B");
+          if(!compulsory) return; // Dashboard pe bhi sirf 6TF Green dikhega
+          let h=`<div class=stock style='border-left:5px solid #2e7d32'><b>${sym} <span style='float:right'>${j.b}B/${j.s}S ${j.time} ✅ 6TF GREEN</span></b><br><div style='margin-top:5px'>`;
           TF.forEach(t=>h+=`<span class=tf>${t}</span>`); h+="<br>";
           TF.forEach(t=>{let v=(j.data && j.data[t])||"N"; let cl=v=="B"?"b":v=="S"?"s":"n"; h+=`<span class='val ${cl}'>${v}</span>`});
           h+="</div></div>"; c.innerHTML+=h;
         });
-        document.getElementById('st').innerText="Updated "+new Date().toLocaleTimeString()+" - Next 30 sec (25 STOCKS LIVE)";
-      }catch(e){ document.getElementById('st').innerText="Loading... 1 min wait"; }
+        if(c.innerHTML=="") c.innerHTML="<div style='text-align:center;padding:20px;color:orange'>Abhi koi stock 6TF Green nahi hai - Wait karo</div>";
+        document.getElementById('st').innerText="Updated "+new Date().toLocaleTimeString()+" - Sirf 6TF Green wale";
+      }catch(e){ document.getElementById('st').innerText="Loading..."; }
     }
     load(); setInterval(load,30000);
     </script></body></html>"""
